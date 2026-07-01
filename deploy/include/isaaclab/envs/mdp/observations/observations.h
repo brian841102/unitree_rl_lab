@@ -122,6 +122,40 @@ REGISTER_OBSERVATION(velocity_commands)
     return obs;
 }
 
+// SMP Steering command: [tar_dir_x, tar_dir_y, tar_speed, face_dir_x, face_dir_y]
+// In the robot's local heading frame (yaw-invariant).
+// Joystick mapping:
+//   ly → target speed (forward positive)
+//   lx → target direction angle (left positive)
+//   rx → face direction angle (right positive)
+REGISTER_OBSERVATION(steering_commands)
+{
+    auto & joystick = env->robot->data.joystick;
+
+    const auto cfg = env->cfg["commands"]["steering"]["ranges"];
+
+    float tar_speed = std::clamp(joystick->ly(),
+        cfg["tar_speed_min"][0].as<float>(),
+        cfg["tar_speed_max"][0].as<float>());
+
+    // Target direction angle from left stick x-axis.
+    float tar_angle = std::clamp(joystick->lx(), -1.0f, 1.0f) * M_PI;
+
+    // Face direction angle from right stick x-axis.
+    float face_angle = std::clamp(-joystick->rx(), -1.0f, 1.0f) * M_PI;
+
+    std::vector<float> obs(5);
+    // Target direction in local heading frame
+    obs[0] = std::cos(tar_angle);
+    obs[1] = std::sin(tar_angle);
+    // Target speed
+    obs[2] = tar_speed;
+    // Face direction in local heading frame
+    obs[3] = std::cos(face_angle);
+    obs[4] = std::sin(face_angle);
+    return obs;
+}
+
 REGISTER_OBSERVATION(gait_phase)
 {
     float period = params["period"].as<float>();
