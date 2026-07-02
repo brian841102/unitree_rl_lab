@@ -123,31 +123,47 @@ REGISTER_OBSERVATION(velocity_commands)
 }
 
 // SMP Steering command: [tar_dir_x, tar_dir_y, tar_speed, face_dir_x, face_dir_y]
-// In the robot's local heading frame (yaw-invariant).
+// In the robot's local heading frame (x = forward, y = left; yaw-invariant).
 // Joystick mapping:
-//   ly → target speed (forward positive)
-//   lx → target direction angle (left positive)
-//   rx → face direction angle (right positive)
+//   Left stick  = 2D travel velocity: up→forward, down→backward, left/right→strafe.
+//                 Stick magnitude sets the speed (full deflection = tar_speed_max).
+//   Right stick x = face-direction / turn command: right→turn right, left→turn left.
 REGISTER_OBSERVATION(steering_commands)
 {
     auto & joystick = env->robot->data.joystick;
 
     const auto cfg = env->cfg["commands"]["steering"]["ranges"];
+    const float tar_speed_max = cfg["tar_speed_max"][0].as<float>();
 
-    float tar_speed = std::clamp(joystick->ly(),
-        cfg["tar_speed_min"][0].as<float>(),
-        cfg["tar_speed_max"][0].as<float>());
+    // ---- Left stick -> target travel direction + speed (heading frame) ----
+    float vx = joystick->ly();          // up  = +forward
+    float vy = -joystick->lx();         // left = +y (strafe left)
+    float mag = std::sqrt(vx * vx + vy * vy);
 
-    // Target direction angle from left stick x-axis.
-    float tar_angle = std::clamp(joystick->lx(), -1.0f, 1.0f) * M_PI;
+    constexpr float kMoveDeadzone = 0.1f;   // matches training stand_speed_threshold
+    float tar_speed, dir_x, dir_y;
+    if (mag < kMoveDeadzone) {// No velocity command -> stand still. tar_dir is arbitrary at zero speed.
+        tar_speed = 0.0f;
+        dir_x = 1.0f;   // default forward
+        dir_y = 0.0f;
+    } else {
+        dir_x = vx / mag;
+        dir_y = vy / mag;
+        tar_speed = std::min(mag, 1.0f) * tar_speed_max;  // full stick = max speed
+    }
 
-    // Face direction angle from right stick x-axis.
-    float face_angle = std::clamp(-joystick->rx(), -1.0f, 1.0f) * M_PI;
+    // ---- Right stick x -> face-direction turn command (heading frame) ----
+    // Limited to +/-90 deg so extremes never wrap past 180 deg (which cause hard-left cmd into a right turn)
+    constexpr float kMaxFaceAngle = M_PI / 2.0f;
+    constexpr float kTurnDeadzone = 0.05f;
+    float rx = joystick->rx();
+    if (std::abs(rx) < kTurnDeadzone) rx = 0.0f;
+    float face_angle = -std::clamp(rx, -1.0f, 1.0f) * kMaxFaceAngle;
 
     std::vector<float> obs(5);
     // Target direction in local heading frame
-    obs[0] = std::cos(tar_angle);
-    obs[1] = std::sin(tar_angle);
+    obs[0] = dir_x;
+    obs[1] = dir_y;
     // Target speed
     obs[2] = tar_speed;
     // Face direction in local heading frame
